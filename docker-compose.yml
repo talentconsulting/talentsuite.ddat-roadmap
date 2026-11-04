@@ -1,0 +1,22 @@
+services:
+  # The tube map and API: http://localhost:3000
+  app:
+    build: .
+    image: ddat-career-map
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      # Serve the JSON from the host, so refreshed data needs only a restart, not a rebuild
+      - ./data:/app/data:ro
+    restart: unless-stopped
+
+  # Re-fetch the framework and rebuild data/ddat-roles.json:
+  #   docker compose run --rm refresh-data && docker compose restart app
+  refresh-data:
+    build: .
+    image: ddat-career-map
+    command: ["node", "scripts/build-data.js"]
+    user: root
+    volumes:
+      - ./data:/app/data
+    profiles: ["tools"]

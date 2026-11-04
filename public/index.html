@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DDaT Career Map</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="top">
+    <h1>DDaT Career Map</h1>
+    <p class="sub">Career pathways across the Government Digital and Data Capability Framework</p>
+  </header>
+
+  <div class="layout">
+    <aside class="side">
+      <section class="panel">
+        <h2>Search</h2>
+        <form id="search-form">
+          <label>Text <input id="q" type="search" placeholder="e.g. cloud, user needs, statistics"></label>
+          <label>Category
+            <select id="category"><option value="">All categories</option></select>
+          </label>
+          <label>Role <input id="role" type="search" placeholder="e.g. architect"></label>
+          <label>Grade
+            <select id="grade"><option value="">Any grade</option></select>
+          </label>
+          <div class="row">
+            <button type="submit">Search</button>
+            <button type="button" id="clear" class="ghost">Clear</button>
+          </div>
+        </form>
+        <p id="result-count" class="muted"></p>
+        <ul id="results" class="results"></ul>
+      </section>
+
+      <section class="panel">
+        <h2>Plan a journey</h2>
+        <label>From <select id="from"></select></label>
+        <label>To <select id="to"></select></label>
+        <div class="row">
+          <button id="route">Find route</button>
+          <button id="clear-route" class="ghost">Clear</button>
+        </div>
+        <div id="journey"></div>
+      </section>
+    </aside>
+
+    <main class="map-wrap">
+      <div class="toolbar">
+        <div id="legend" class="legend"></div>
+        <div class="zoom">
+          <button id="zoom-out" class="ghost" aria-label="Zoom out">−</button>
+          <button id="zoom-reset" class="ghost">100%</button>
+          <button id="zoom-in" class="ghost" aria-label="Zoom in">+</button>
+        </div>
+      </div>
+      <div id="map" class="map" tabindex="0"></div>
+      <section id="details" class="details" hidden></section>
+    </main>
+  </div>
+
+  <footer class="foot">
+    Data: <a href="https://understand-digital-data-roles-skills.service.gov.uk/">Government Digital and Data Profession Capability Framework</a>,
+    Open Government Licence v3.0. Grades marked <span class="inferred-key">◌</span> are estimated where none is published.
+  </footer>
+  <script src="/app.js"></script>
+</body>
+</html>
