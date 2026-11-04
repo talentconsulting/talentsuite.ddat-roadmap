@@ -14,7 +14,10 @@ const FAMILY_COLOURS = {
 const FALLBACK = ['#6A7278', '#003688', '#84B817', '#EE7C0E'];
 
 // Layout constants
-const L = { left: 225, colW: 128, top: 56, familyH: 34, rowH: 46, mgmtExtra: 26, minGap: 74, right: 60 };
+const L = {
+  left: 240, colW: 122, top: 52, familyH: 34, track: 36, mgmtDrop: 26, minGap: 72,
+  lineW: 7, channelGap: 9, hubGap: 60, bottom: 50,
+};
 
 const NS = 'http://www.w3.org/2000/svg';
 const $ = (s) => document.querySelector(s);
@@ -26,64 +29,148 @@ function el(tag, attrs = {}, parent) {
   return e;
 }
 
-let DATA, P, roleById, levelById, linesByRole, levelPos = new Map(), roleRow = new Map(), svg, layers = {};
+let DATA, P, roleById, levelById, linesByRole, moveKeys, svg, layers = {};
+let levelPos = new Map(), promoteGeom = new Map(), channelOf = new Map(), hub = null;
 let skillName = (id) => id;
 let zoom = 1, mapW = 0, mapH = 0, hiddenFamilies = new Set();
 
 const colour = (familyId, i = 0) => FAMILY_COLOURS[familyId] || FALLBACK[i % FALLBACK.length];
+const sign = (n) => (n > 0 ? 1 : n < 0 ? -1 : 0);
 
 /** Short station label: the seniority prefix, e.g. "Senior data analyst" -> "Senior". */
 const PREFIX = /^(apprentice|trainee|associate|junior|senior|lead|principal|head of|chief|major)\b/i;
 function shortLabel(level) {
   const m = level.name.match(PREFIX);
   const s = m ? m[1].charAt(0).toUpperCase() + m[1].slice(1) : level.name;
-  return s.length > 14 ? s.slice(0, 13) + '…' : s;
+  return s.length > 12 ? s.slice(0, 11) + '…' : s;
 }
 
-// Grade index -> x (AO = 1 is the first column; SCS 1 = 7 is the last)
-const SCS_COL = 7;
-const gradeX = (rank) => {
-  const mid = rank.min >= SCS_COL ? SCS_COL : Math.min((rank.min + rank.max) / 2, SCS_COL - 1);
-  return L.left + (mid - 1) * L.colW + L.colW / 2;
-};
+// Grade index -> x. Columns ("zones") run AO..G6; the Senior Civil Service hub sits to the right.
+const gradeX = (rank) => L.left + (Math.min((rank.min + rank.max) / 2, 6) - 1) * L.colW + L.colW / 2;
+
+/** Octilinear connector (horizontal/vertical + 45° diagonal), returned as path commands without the M. */
+function octi(a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  if (!dx || !dy) return `L${b.x},${b.y}`;
+  if (Math.abs(dy) >= Math.abs(dx)) return `L${a.x},${b.y - sign(dy) * Math.abs(dx)} L${b.x},${b.y}`;
+  return `L${b.x - sign(dx) * Math.abs(dy)},${a.y} L${b.x},${b.y}`;
+}
+
+/** Order roles in a family so roles that share skills sit on neighbouring tracks (more interchanges). */
+function orderRoles(roleIds) {
+  const w = (a, b) => P.moves.filter((m) => m.type === 'transfer'
+    && ((m.fromRoleId === a && m.toRoleId === b) || (m.fromRoleId === b && m.toRoleId === a))).length;
+  const left = [...roleIds];
+  const deg = (id) => left.reduce((n, o) => n + (o === id ? 0 : w(id, o)), 0);
+  left.sort((a, b) => deg(b) - deg(a));
+  const out = [left.shift()];
+  while (left.length) {
+    const last = out.at(-1);
+    left.sort((a, b) => w(last, b) - w(last, a));
+    out.push(left.shift());
+  }
+  return out;
+}
+
+/** Best (most senior) departure for each role -> SCS role link. */
+function promoteLinks() {
+  const best = new Map();
+  for (const m of P.moves) {
+    if (m.type !== 'promote') continue;
+    const a = levelPos.get(m.from);
+    if (!a || !levelPos.get(m.to)) continue;
+    const key = `${m.fromRoleId}>${m.toRoleId}`;
+    if (!best.has(key) || a.x > levelPos.get(best.get(key).from).x) best.set(key, m);
+  }
+  return [...best.values()];
+}
 
 function layout() {
-  levelPos = new Map(); roleRow = new Map();
-  let y = L.top;
-  const families = DATA.families.filter((f) => !hiddenFamilies.has(f.id));
+  levelPos = new Map(); promoteGeom = new Map(); channelOf = new Map(); hub = null;
+  const visible = DATA.families.filter((f) => !hiddenFamilies.has(f.id));
+  const scsFamily = visible.find((f) => f.roleIds.every((id) => roleById.get(id).isSeniorCivilService));
+  const bands = visible.filter((f) => f !== scsFamily);
+
+  // Families with most routes into the SCS go in the middle, closest to the hub
+  const feeders = (f) => f.roleIds.reduce((n, id) => n + roleById.get(id).leadsTo.length, 0);
+  const sorted = [...bands].sort((a, b) => feeders(b) - feeders(a));
+  const ordered = [];
+  sorted.forEach((f, i) => (i % 2 ? ordered.push(f) : ordered.unshift(f)));
+
   const rows = [];
-  for (const f of families) {
+  let y = L.top;
+  for (const f of ordered) {
     rows.push({ type: 'family', family: f, y });
     y += L.familyH;
-    for (const id of f.roleIds) {
+    for (const id of orderRoles(f.roleIds)) {
       const role = roleById.get(id);
-      const hasMgmt = Boolean(linesByRole.get(id).management);
-      const rowY = y + L.rowH / 2 - 6;
-      roleRow.set(id, { y: rowY, family: f });
-      // Core track: x from grade, strictly increasing so stations never overlap
       const { core, management } = linesByRole.get(id);
       let prevX = -Infinity;
       for (const l of core.stops.map((s) => levelById.get(s))) {
         const x = Math.max(gradeX(l.gradeRank), prevX + L.minGap);
-        levelPos.set(l.id, { x, y: rowY, role, level: l });
+        levelPos.set(l.id, { x, y, role, level: l });
         prevX = x;
       }
-      // Management track runs parallel, just below its core equivalent
       let prevM = -Infinity;
       for (const l of (management?.stops || []).map((s) => levelById.get(s))) {
         const base = levelPos.get(l.branchOf);
-        const x = Math.max(base ? base.x + 22 : gradeX(l.gradeRank), prevM + L.minGap);
-        levelPos.set(l.id, { x, y: rowY + L.mgmtExtra, role, level: l });
+        const x = Math.max(base ? base.x + L.mgmtDrop : gradeX(l.gradeRank), prevM + L.minGap);
+        levelPos.set(l.id, { x, y: y + L.mgmtDrop, role, level: l });
         prevM = x;
       }
-      rows.push({ type: 'role', role, y: rowY });
-      y += L.rowH + (hasMgmt ? L.mgmtExtra : 0);
+      rows.push({ type: 'role', role, y });
+      y += L.track + (management ? L.mgmtDrop : 0);
     }
-    y += 6;
+    y += 10;
   }
-  mapW = Math.max(L.left + 7 * L.colW + L.right, ...[...levelPos.values()].map((p) => p.x + L.right));
-  mapH = y + 20;
+  const maxX = Math.max(L.left + 6 * L.colW, ...[...levelPos.values()].map((p) => p.x));
+
+  // Senior Civil Service hub: one interchange, vertically centred on the lines feeding it
+  if (scsFamily) {
+    const ids = scsFamily.roleIds;
+    const feederYs = ids.flatMap((id) => roleById.get(id).ledFrom.map((r) => levelPos.get(roleById.get(r.id)?.levels.at(-1).id)?.y)).filter(Boolean);
+    const midY = feederYs.length ? feederYs.reduce((a, b) => a + b, 0) / feederYs.length : (L.top + y) / 2;
+    const hubTop = midY - ((ids.length - 1) * L.hubGap) / 2;
+    hub = { ids, x: 0, top: hubTop, bottom: hubTop + (ids.length - 1) * L.hubGap };
+    ids.forEach((id, i) => {
+      const l = roleById.get(id).levels[0];
+      levelPos.set(l.id, { x: 0, y: hubTop + i * L.hubGap, role: roleById.get(id), level: levelById.get(l.id) });
+    });
+
+    // Each feeder gets its own vertical channel, so the lines run side by side into the hub
+    const links = promoteLinks();
+    const above = links.filter((m) => levelPos.get(m.from).y <= levelPos.get(m.to).y).sort((a, b) => levelPos.get(a.from).y - levelPos.get(b.from).y);
+    const below = links.filter((m) => levelPos.get(m.from).y > levelPos.get(m.to).y).sort((a, b) => levelPos.get(b.from).y - levelPos.get(a.from).y);
+    const n = Math.max(above.length, below.length, 1);
+    const c0 = maxX + 40;
+    // farthest line takes the right-most channel, so channels don't cross the nearer lines
+    above.forEach((m, i) => channelOf.set(`${m.fromRoleId}>${m.toRoleId}`, c0 + (n - 1 - i) * L.channelGap));
+    below.forEach((m, i) => channelOf.set(`${m.fromRoleId}>${m.toRoleId}`, c0 + (n - 1 - i) * L.channelGap));
+    hub.x = c0 + n * L.channelGap + 46;
+    for (const id of ids) levelPos.get(roleById.get(id).levels[0].id).x = hub.x;
+  }
+
+  mapW = (hub ? hub.x + 190 : maxX + 80);
+  mapH = y + L.bottom;
   return rows;
+}
+
+/** Path (without M) from a station into the hub, through the link's channel. */
+function promotePath(m) {
+  const a = levelPos.get(m.from), b = levelPos.get(m.to);
+  const cx = channelOf.get(`${m.fromRoleId}>${m.toRoleId}`) ?? (b.x - 40);
+  const dy = b.y - a.y, s = sign(dy), r = Math.min(16, Math.abs(dy) / 2);
+  const end = b.x - 11;
+  if (!dy) return `L${end},${b.y}`;
+  return `L${cx - r},${a.y} L${cx},${a.y + s * r} L${cx},${b.y - s * r} L${cx + r},${b.y} L${end},${b.y}`;
+}
+
+/** Path (without M) for any precomputed move, used to draw journeys along the map. */
+function movePath(m) {
+  const a = levelPos.get(m.from), b = levelPos.get(m.to);
+  if (m.type === 'promote') return promotePath(m);
+  if (m.type === 'branch') return `L${b.x - (b.y - a.y)},${a.y} L${b.x},${b.y}`;
+  return octi(a, b);
 }
 
 function render() {
@@ -93,85 +180,147 @@ function render() {
   svg = el('svg', { viewBox: `0 0 ${mapW} ${mapH}`, role: 'img', 'aria-label': 'Tube map of digital and data career pathways' }, host);
   applyZoom();
 
-  // Grade columns
-  const grid = el('g', {}, svg);
-  DATA.meta.gradeOrder.slice(1, 8).forEach((g, i) => {
-    const x = L.left + i * L.colW + L.colW / 2;
-    el('line', { x1: L.left + i * L.colW, x2: L.left + i * L.colW, y1: 30, y2: mapH, class: 'grid' }, grid);
-    const label = i === 6 ? 'SCS' : g;
-    el('text', { x, y: 24, 'text-anchor': 'middle', class: 'grade-label' }, grid).textContent = label;
+  // Zones = Civil Service grades
+  const zones = el('g', {}, svg);
+  const zoneNames = ['AO', 'EO', 'HEO', 'SEO', 'G7', 'G6'];
+  zoneNames.forEach((g, i) => {
+    const x = L.left + i * L.colW;
+    el('rect', { x, y: 0, width: L.colW, height: mapH, class: i % 2 ? 'zone alt' : 'zone' }, zones);
+    for (const ty of [22, mapH - 14]) el('text', { x: x + L.colW / 2, y: ty, 'text-anchor': 'middle', class: 'zone-label' }, zones).textContent = g;
   });
+  if (hub) {
+    const x = L.left + 6 * L.colW;
+    el('rect', { x, y: 0, width: mapW - x, height: mapH, class: 'zone scs' }, zones);
+    for (const ty of [22, mapH - 14]) el('text', { x: hub.x, y: ty, 'text-anchor': 'middle', class: 'zone-label' }, zones).textContent = 'Senior Civil Service';
+  }
 
-  layers.scs = el('g', {}, svg);
   layers.lines = el('g', {}, svg);
+  layers.ix = el('g', {}, svg);
+  layers.labels = el('g', {}, svg);
   layers.overlay = el('g', {}, svg);
   layers.route = el('g', {}, svg);
 
+  computeInterchanges();
   for (const r of rows) {
     if (r.type === 'family') {
-      const t = el('text', { x: 14, y: r.y + 22, class: 'family-label', fill: colour(r.family.id) }, layers.lines);
-      t.textContent = r.family.name;
+      el('rect', { x: 14, y: r.y + 9, width: 18, height: 6, rx: 3, fill: colour(r.family.id) }, layers.labels);
+      el('text', { x: 38, y: r.y + 16, class: 'family-label' }, layers.labels).textContent = r.family.name;
       continue;
     }
-    drawRole(r.role, r.y);
+    drawLine(r.role);
   }
-  drawScsLinks();
+  drawInterchanges();
+  if (hub) drawHub();
 }
 
-function drawRole(role, y) {
+function drawLine(role) {
   const c = colour(role.familyId);
   const g = el('g', { class: 'role', 'data-role': role.id }, layers.lines);
+  const lg = el('g', { class: 'role', 'data-role': role.id }, layers.labels);
   const { core: coreLine, management: mgmtLine } = linesByRole.get(role.id);
   const core = coreLine.stops.map((id) => levelPos.get(id));
   const mgmt = (mgmtLine?.stops || []).map((id) => levelPos.get(id));
+  const lineAttrs = { stroke: c, 'stroke-width': L.lineW, fill: 'none', 'stroke-linejoin': 'round' };
 
-  const label = el('text', { x: 24, y: y + 4, class: 'role-label' }, g);
-  label.textContent = role.name.length > 32 ? role.name.slice(0, 31) + '…' : role.name;
-  el('title', {}, label).textContent = role.name;
-  label.addEventListener('click', () => selectRole(role.id));
-
-  const x1 = core[0].x - 18, x2 = core[core.length - 1].x + 18;
-  el('line', { x1, x2, y1: y, y2: y, stroke: c, 'stroke-width': 8, 'stroke-linecap': 'round' }, g);
+  // Trunk, with a short stub past each terminus
+  el('path', { d: `M${core[0].x - 10},${core[0].y} L${core.at(-1).x + 10},${core[0].y}`, ...lineAttrs }, g);
   if (mgmt.length) {
     const base = levelPos.get(mgmtLine.branchFrom) || core[0];
-    const d = `M${base.x},${y} C${base.x + 14},${y} ${base.x + 8},${mgmt[0].y} ${mgmt[0].x},${mgmt[0].y} L${mgmt[mgmt.length - 1].x + 14},${mgmt[0].y}`;
-    el('path', { d, stroke: c, 'stroke-width': 5, fill: 'none', 'stroke-linecap': 'round', opacity: 0.75 }, g);
+    el('path', { d: `M${base.x},${base.y} L${mgmt[0].x - (mgmt[0].y - base.y)},${base.y} L${mgmt[0].x},${mgmt[0].y} L${mgmt.at(-1).x + 10},${mgmt[0].y}`, ...lineAttrs }, g);
+  }
+  // Branches into the Senior Civil Service hub
+  for (const m of promoteLinks().filter((x) => x.fromRoleId === role.id)) {
+    const a = levelPos.get(m.from);
+    el('path', { d: `M${a.x},${a.y} ${promotePath(m)}`, ...lineAttrs, 'data-to': m.toRoleId }, g);
+  }
+  // Terminus bars
+  for (const [p, dir] of [[core[0], -1], [core.at(-1), 1], ...(mgmt.length ? [[mgmt.at(-1), 1]] : [])]) {
+    if (dir === 1 && promoteLinks().some((m) => m.from === p.level.id)) continue;
+    el('rect', { x: p.x + dir * 10 - 2, y: p.y - 8, width: 4, height: 16, fill: c }, g);
   }
 
+  // Line name, at the western terminus
+  const name = el('text', { x: core[0].x - 18, y: core[0].y + 4, 'text-anchor': 'end', class: 'line-label halo' }, lg);
+  name.textContent = role.name;
+  name.addEventListener('click', () => selectRole(role.id));
+
+  let lastRight = -Infinity, lastY = null;
   for (const p of [...core, ...mgmt]) {
-    const isScs = role.isSeniorCivilService;
-    const s = el('circle', {
-      cx: p.x, cy: p.y, r: isScs ? 10 : 7, stroke: isScs ? 'var(--ink)' : c, 'stroke-width': isScs ? 4 : 3,
-      class: 'station' + (p.level.gradeInferred ? ' inferred' : ''), 'data-level': p.level.id, tabindex: 0,
-    }, g);
-    const grades = p.level.grades.map((x) => x.code).join(', ') || 'not published';
-    el('title', {}, s).textContent = `${p.level.name}\nGrade: ${grades}${p.level.gradeInferred ? ' (position estimated)' : ''}\n${p.level.skills.length} skills`;
-    s.addEventListener('click', () => selectRole(role.id, p.level.id));
-    s.addEventListener('keydown', (e) => { if (e.key === 'Enter') selectRole(role.id, p.level.id); });
-    if (!isScs) {
-      const t = el('text', { x: p.x, y: p.y + 20, 'text-anchor': 'middle', class: 'stop-label' }, g);
-      t.textContent = shortLabel(p.level);
+    const ix = isInterchange(p.level.id);
+    if (p.y !== lastY) { lastRight = -Infinity; lastY = p.y; }
+    if (!ix) el('rect', { x: p.x - 2, y: p.y - L.lineW / 2 - 6, width: 4, height: 7, fill: c, class: p.level.gradeInferred ? 'tick inferred' : 'tick' }, g);
+    const text = shortLabel(p.level) + (p.level.track === 'management' ? ' (mgr)' : '');
+    const half = text.length * 2.9;
+    if (p.x - half > lastRight + 4) {
+      const t = el('text', { x: p.x, y: p.y - 13, 'text-anchor': 'middle', class: 'stop-label halo' + (p.level.gradeInferred ? ' inferred' : '') }, lg);
+      t.textContent = text;
+      lastRight = p.x + half;
     }
+    // Generous invisible hit target
+    const hit = el('circle', { cx: p.x, cy: p.y, r: 11, class: 'hit', 'data-level': p.level.id, tabindex: 0 }, lg);
+    const grades = p.level.grades.map((x) => x.code).join(', ') || 'not published';
+    el('title', {}, hit).textContent = `${p.level.name}\nGrade: ${grades}${p.level.gradeInferred ? ' (estimated position)' : ''}\n${p.level.skills.length} skills`;
+    hit.addEventListener('click', () => selectRole(role.id, p.level.id));
+    hit.addEventListener('keydown', (e) => { if (e.key === 'Enter') selectRole(role.id, p.level.id); });
   }
 }
 
-/** Dashed connectors for the precomputed "promote" moves into Senior Civil Service roles. */
-function drawScsLinks() {
-  // One connector per role pair, from the right-most (most senior) departing station
-  const best = new Map();
-  for (const m of P.moves) {
-    if (m.type !== 'promote') continue;
-    const a = levelPos.get(m.from), b = levelPos.get(m.to);
-    if (!a || !b) continue;
-    const key = `${m.fromRoleId}>${m.toRoleId}`;
-    if (!best.has(key) || a.x > best.get(key).a.x) best.set(key, { m, a, b });
+/** Interchanges: stations at the same grade position, in the same family, linked by a transfer move. */
+let ixGroups = [];
+function computeInterchanges() {
+  const byKey = new Map();
+  for (const [id, p] of levelPos) {
+    if (p.role.isSeniorCivilService) continue;
+    const k = `${p.role.familyId}@${p.x}`;
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(id);
   }
-  for (const { m, a, b } of best.values()) {
-    const mx = Math.max(a.x, b.x - 60) + 30;
-    el('path', {
-      d: `M${a.x + 18},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x - 10},${b.y}`,
-      class: 'scs-link', 'data-from': m.fromRoleId, 'data-to': m.toRoleId,
-    }, layers.scs);
+  ixGroups = [];
+  for (const ids of byKey.values()) {
+    if (ids.length < 2) continue;
+    // Walk down the column; join a station to the capsule above only if it's on the next track
+    // and shares a transfer move with a station already in that capsule.
+    ids.sort((a, b) => levelPos.get(a).y - levelPos.get(b).y);
+    const linked = (u, v) => moveKeys.has(`${u}>${v}`) || moveKeys.has(`${v}>${u}`);
+    let comp = [ids[0]];
+    for (const v of ids.slice(1)) {
+      const gap = levelPos.get(v).y - levelPos.get(comp.at(-1)).y;
+      if (gap <= L.track + L.mgmtDrop && comp.some((u) => linked(u, v))) comp.push(v);
+      else { if (comp.length > 1) ixGroups.push(comp); comp = [v]; }
+    }
+    if (comp.length > 1) ixGroups.push(comp);
+  }
+}
+const isInterchange = (levelId) => ixGroups.some((g) => g.includes(levelId));
+
+function drawInterchanges() {
+  for (const ids of ixGroups) {
+    const ps = ids.map((id) => levelPos.get(id));
+    const x = ps[0].x, y1 = Math.min(...ps.map((p) => p.y)), y2 = Math.max(...ps.map((p) => p.y));
+    const roles = [...new Set(ps.map((p) => p.role.id))].join(' ');
+    const g = el('g', { class: 'ix', 'data-roles': roles }, layers.ix);
+    el('rect', { x: x - 7, y: y1 - 7, width: 14, height: y2 - y1 + 14, rx: 7, class: 'ix-capsule' }, g);
+  }
+}
+
+function drawHub() {
+  const ps = hub.ids.map((id) => levelPos.get(roleById.get(id).levels[0].id));
+  el('rect', { x: hub.x - 14, y: hub.top - 14, width: 28, height: hub.bottom - hub.top + 28, rx: 14, class: 'ix-capsule hub' }, layers.ix);
+  for (const p of ps) {
+    const g = el('g', { class: 'role', 'data-role': p.role.id }, layers.labels);
+    el('circle', { cx: p.x, cy: p.y, r: 7, class: 'hub-stop', fill: colour(p.role.familyId) }, g);
+    const t = el('text', { x: p.x + 22, y: p.y + 5, class: 'hub-label halo' }, g);
+    const words = p.role.name.split(' ');
+    const lines = [];
+    for (const w of words) {
+      if (lines.length && (lines.at(-1) + ' ' + w).length <= 18) lines[lines.length - 1] += ' ' + w;
+      else lines.push(w);
+    }
+    lines.forEach((ln, i) => { el('tspan', { x: p.x + 22, dy: i ? 15 : (lines.length > 1 ? -2 : 0) }, t).textContent = ln; });
+    const grades = p.level.grades.map((x) => x.code).join(', ');
+    const hit = el('circle', { cx: p.x, cy: p.y, r: 14, class: 'hit', tabindex: 0 }, g);
+    el('title', {}, hit).textContent = `${p.role.name}\nGrade: ${grades}`;
+    for (const n of [hit, t]) n.addEventListener('click', () => selectRole(p.role.id));
   }
 }
 
@@ -187,7 +336,9 @@ function highlightRoles(ids, levelIds = []) {
   clearHighlight();
   if (!ids.length) return;
   $('#map').classList.add('dim');
-  for (const id of ids) svg.querySelector(`.role[data-role="${id}"]`)?.classList.add('hl');
+  const set = new Set(ids);
+  for (const id of set) svg.querySelectorAll(`.role[data-role="${id}"]`).forEach((n) => n.classList.add('hl'));
+  svg.querySelectorAll('.ix').forEach((n) => { if (n.dataset.roles.split(' ').some((r) => set.has(r))) n.classList.add('hl'); });
   for (const lid of levelIds) {
     const p = levelPos.get(lid);
     if (p) el('circle', { cx: p.x, cy: p.y, r: 12, class: 'match' }, layers.overlay);
@@ -202,19 +353,19 @@ function selectRole(id, levelId) {
   const moves = P.moves.filter(touches);
   const connected = new Set(moves.flatMap((m) => [m.fromRoleId, m.toRoleId]));
   highlightRoles([id, ...connected], levelId ? [levelId] : []);
-  svg.querySelectorAll(`.scs-link[data-from="${id}"], .scs-link[data-to="${id}"]`).forEach((n) => n.classList.add('hl'));
 
-  // Draw one transfer connector per neighbouring role: the move with the shortest hop
+  // One dotted "out of station interchange" per neighbouring role: the shortest hop
   const best = new Map();
   for (const m of moves.filter((x) => x.type === 'transfer')) {
     const pa = levelPos.get(m.from), pb = levelPos.get(m.to);
     if (!pa || !pb) continue;
     const other = m.fromRoleId === id ? m.toRoleId : m.fromRoleId;
-    const d = Math.abs(pa.x - pb.x);
+    const d = Math.abs(pa.x - pb.x) * 3 + Math.abs(pa.y - pb.y);
     if (!best.has(other) || d < best.get(other).d) best.set(other, { pa, pb, d });
   }
   for (const { pa, pb } of best.values()) {
-    el('path', { d: `M${pa.x},${pa.y} C${pa.x + 30},${(pa.y + pb.y) / 2} ${pb.x - 30},${(pa.y + pb.y) / 2} ${pb.x},${pb.y}`, class: 'transfer' }, layers.overlay);
+    if (pa.x === pb.x && Math.abs(pa.y - pb.y) <= L.track && ixGroups.some((g) => g.includes(pa.level.id) && g.includes(pb.level.id))) continue;
+    el('path', { d: `M${pa.x},${pa.y} ${octi(pa, pb)}`, class: 'transfer' }, layers.overlay);
   }
   showDetails(role, levelId);
   scrollToPoint(levelPos.get(levelId || role.levels[0].id));
@@ -310,11 +461,8 @@ function planRoute() {
   };
 
   const pts = res.stops.map((id) => levelPos.get(id)).filter(Boolean);
-  const d = pts.map((p, i) => {
-    if (!i) return `M${p.x},${p.y}`;
-    const q = pts[i - 1];
-    return q.y === p.y ? `L${p.x},${p.y}` : `C${q.x + 40},${q.y} ${p.x - 40},${p.y} ${p.x},${p.y}`;
-  }).join(' ');
+  if (pts.length !== res.stops.length) { out.innerHTML = '<p class="muted">Part of this route is in a hidden category — show all categories to see it.</p>'; return; }
+  const d = `M${pts[0].x},${pts[0].y} ` + route.moves.map(movePath).join(' ');
   el('path', { d, class: 'route-casing' }, layers.route);
   el('path', { d, class: 'route' }, layers.route);
   for (const p of pts) el('circle', { cx: p.x, cy: p.y, r: 8, class: 'route-stop' }, layers.route);
@@ -384,6 +532,7 @@ function buildControls() {
 (async function init() {
   DATA = await fetch('/data/ddat-roles.json').then((r) => r.json());
   P = DATA.pathways;
+  moveKeys = new Set(P.moves.map((m) => `${m.from}>${m.to}`));
   roleById = new Map(DATA.roles.map((r) => [r.id, r]));
   levelById = new Map(DATA.roles.flatMap((r) => r.levels.map((l) => [l.id, { ...l, roleId: r.id }])));
   linesByRole = new Map();

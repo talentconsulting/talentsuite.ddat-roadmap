@@ -111,11 +111,14 @@ For a simple client-side search, filter `roles` by `familyId` (category) and by 
 
 ## The tube map
 
-- **Lines** are roles, coloured by family. **Stations** are role levels, placed in Civil Service grade columns from AO to SCS. A dashed ring means the grade is estimated.
-- **Management branches** (software developer, DevOps) run as a spur below the core line.
-- **Dashed curves** link roles to the SCS roles they can lead to.
-- **Click a role or station** to see its details. The map then shows the transfers to roles that share its skills.
-- **Everything is drawn from `pathways`:** lines from `lines`, SCS links from `promote` moves, the connectors for a selected role from its `transfer` moves, and journeys from `routes`. The UI computes no pathways itself.
+- **Lines** are roles, coloured by family. **Stations** (ticks) are role levels.
+- **Zones** are Civil Service grades, from AO to G6. An italic label means the grade is estimated.
+- **Interchanges** (white capsules) join stations on neighbouring lines where a `transfer` move connects them at the same grade.
+- **The Senior Civil Service hub** sits on the right. Lines whose roles can lead to an SCS role branch into it with 45° bends, each in its own channel.
+- **Management tracks** (software developer, DevOps) branch off below the core line, marked "(mgr)".
+- **Click a line or station** to fade the rest of the map. Dotted links then show the transfers to roles further away.
+- **Journeys** are drawn along the map's own tracks.
+- **Everything comes from `pathways`:** lines from `lines`, interchanges and transfers from `transfer` moves, hub branches from `promote` moves, and journeys from `routes`. The UI computes no pathways itself.
 - **Deep links:** `/?role=data-analyst` or `/?from=software-developer--junior-developer&to=chief-technology-officer`.
 
 Routes are suggestions built from the framework's "shares skills" and "could lead to" links. They are not official career paths.

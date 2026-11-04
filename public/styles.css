@@ -6,20 +6,20 @@
   --line: #d9d9d4;
   --accent: #1d4ed8;
   --station: #ffffff;
-  --grid: #ececE7;
+  --zone: #f1f1ec; --zone-scs: #ebe9f2;
   --route: #111111;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #131416; --surface: #1c1e21; --ink: #ecedee; --muted: #9aa0a6;
-    --line: #34373b; --accent: #7aa2ff; --station: #1c1e21; --grid: #212327; --route: #ffffff;
+    --line: #34373b; --accent: #7aa2ff; --station: #1c1e21; --zone: #222428; --zone-scs: #26232d; --route: #ffffff;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #131416; --surface: #1c1e21; --ink: #ecedee; --muted: #9aa0a6;
-  --line: #34373b; --accent: #7aa2ff; --station: #1c1e21; --grid: #212327; --route: #ffffff;
+  --line: #34373b; --accent: #7aa2ff; --station: #1c1e21; --zone: #222428; --zone-scs: #26232d; --route: #ffffff;
   color-scheme: dark;
 }
 
@@ -75,19 +75,25 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 }
 .map svg { display: block; }
 .map text { fill: var(--ink); font-family: inherit; }
-.map .grade-label { fill: var(--muted); font-size: 12px; font-weight: 600; }
-.map .grid { stroke: var(--grid); }
-.map .family-label { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
-.map .role-label { font-size: 12.5px; font-weight: 600; cursor: pointer; }
-.map .stop-label { font-size: 10.5px; fill: var(--muted); }
-.map .station { fill: var(--station); cursor: pointer; }
-.map .station.inferred { stroke-dasharray: 2 2; }
-.map .role { transition: opacity .15s; }
-.map.dim .role:not(.hl) { opacity: .15; }
-.map.dim .scs-link:not(.hl) { opacity: .08; }
-.map .scs-link { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 4 4; opacity: .35; }
-.map .scs-link.hl { opacity: 1; stroke: var(--ink); }
-.map .transfer { fill: none; stroke: var(--ink); stroke-width: 2; stroke-dasharray: 2 4; stroke-linecap: round; }
+.map .zone { fill: var(--surface); }
+.map .zone.alt { fill: var(--zone); }
+.map .zone.scs { fill: var(--zone-scs); }
+.map .zone-label { fill: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .06em; }
+.map .family-label { font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.map .halo { paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
+.map .line-label { font-size: 12.5px; font-weight: 700; cursor: pointer; }
+.map .stop-label { font-size: 10.5px; fill: var(--ink); }
+.map .stop-label.inferred { font-style: italic; fill: var(--muted); }
+.map .tick.inferred { opacity: .55; }
+.map .ix-capsule { fill: var(--station); stroke: var(--ink); stroke-width: 2.5; }
+.map .ix-capsule.hub { stroke-width: 3.5; }
+.map .hub-stop { stroke: var(--ink); stroke-width: 2; }
+.map .hub-label { font-size: 14px; font-weight: 800; cursor: pointer; }
+.map .hit { fill: transparent; cursor: pointer; }
+.map .hit:focus-visible { outline: none; stroke: var(--accent); stroke-width: 3; }
+.map .role, .map .ix { transition: opacity .15s; }
+.map.dim .role:not(.hl), .map.dim .ix:not(.hl) { opacity: .12; }
+.map .transfer { fill: none; stroke: var(--ink); stroke-width: 2.5; stroke-dasharray: 1 5; stroke-linecap: round; }
 .map .match { fill: none; stroke: var(--accent); stroke-width: 3; }
 .map .route-casing { fill: none; stroke: var(--surface); stroke-width: 14; stroke-linecap: round; stroke-linejoin: round; }
 .map .route { fill: none; stroke: var(--route); stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
