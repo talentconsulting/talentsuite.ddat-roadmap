@@ -1,0 +1,16 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# In Render: New > Blueprint > pick this repo.
+services:
+  - type: web
+    name: ddat-career-map
+    runtime: node
+    plan: free                      # free instances sleep after ~15 min idle; use "starter" to keep it always on
+    region: frankfurt
+    branch: main
+    buildCommand: npm install       # no dependencies; the committed data/ddat-roles.json is served as-is
+    startCommand: node server.js
+    healthCheckPath: /api/families
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"

@@ -22,6 +22,12 @@ docker compose restart app                    # pick up the refreshed data
 
 `./data` is mounted into the container, so you only rebuild the image when the code changes.
 
+### Render
+
+`render.yaml` is a Render Blueprint. In Render, choose **New → Blueprint**, pick this GitHub repo, and click **Apply**. Every push to `main` then redeploys the app.
+
+The app serves the committed `data/ddat-roles.json`. To update it, run `npm run build:data` locally, then commit and push.
+
 ## Data: `data/ddat-roles.json`
 
 The data comes from the framework's official CSV exports (`/download/roles.csv` and `/download/skills.csv`).
